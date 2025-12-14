@@ -25,3 +25,8 @@ The general style options like thickness of lines and colors can be set in the i
 Partition size tells the resolution of object finding algorithm. Bigger partitions make search faster, but find more unintended objects.
 After first search, the returned objects may be calculated with brute force that discards false positives and false negatives.
 On this second search, the size of the objects is accounted to determinate what to discard. The greedy version of search algorithm rejects objects not completely enclosed by selection area. The lazy version includes anything overlapping the selection area.
+
+# FUTURE IMPROVEMENTS
+- Shaders instead of custom drawing could improve performance.
+- A binary tree and a quadtree algorithm could further improve performance and search speed.
+- More selection options, like polygonal lasso, maybe?
