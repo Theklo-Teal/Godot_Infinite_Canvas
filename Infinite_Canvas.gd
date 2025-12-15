@@ -7,7 +7,7 @@ class_name InfiCanvas
 
 @export var partition_size : float = 100  ## Bigger number makes searching objects in the canvas faster, but less accurate.
 
-@export_group("Theme")
+@export_group("Style")
 @export var cell_size : int = 50 ## The nominal size for the background pattern.
 @export var min_cell_size : int = 8 ## As you zoom out and cells become smaller, how small until we just don't bother rendering?
 @export var grid_thick : int = 2 ## Width of the lines for drawing background pattern.
