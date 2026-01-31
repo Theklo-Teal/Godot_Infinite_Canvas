@@ -1,159 +1,284 @@
-[gd_scene load_steps=3 format=3 uid="uid://br4lbmux43p4o"]
+[gd_scene format=3 uid="uid://phxn4xo58fqk"]
 
-[sub_resource type="GDScript" id="GDScript_7dm0k"]
+[sub_resource type="GDScript" id="GDScript_7u557"]
 script/source = "@tool
 extends InfiCanvas
 
-## This is an example of a script extending the InfiCanvas for added features.
+const MINIMAP_SIZE = 350
 
-@export var minimap : StyleBoxFlat
+func _ready() -> void:
+	resized.connect(_resized)
+	_resized()
 
-var creating_circle : bool
-var visible_circles : Array
+func _resized():
+	var min_axis = size.min_axis_index() 
+	var max_axis = size.max_axis_index()
+	var aspect = size[min_axis] / size[max_axis]
+	%Minimap.custom_minimum_size[min_axis] = MINIMAP_SIZE * aspect
+	%Minimap.custom_minimum_size[max_axis] = MINIMAP_SIZE
+
+func _origin_moved(_past:Vector2, _future:Vector2):
+	%Minimap.queue_redraw()
+
+var click_start := Vector2.ZERO
 
 func _gui_input(event: InputEvent) -> void:
 	super(event)
-
-	if event is InputEventMouseButton:
-		if event.button_index == MOUSE_BUTTON_LEFT and Input.is_key_pressed(KEY_CTRL):
-			if event.is_pressed(): # Currently dragging to create circle.
-				creating_circle = true
-			else: # Finished creating circle.
-				creating_circle = false
-				var radius = (ini_mouse - event.position).length()
-				if radius > 20:
-					var point = to_canvas_position(ini_mouse)
-					# Circle objects are defined as a Dictionary with radius and center coordinate.
-					place_object({\"center\":point, \"radius\":radius * zoom}, point)
-		
-	
 	if event is InputEventMouseMotion:
-		if creating_circle:
+		var canvas_coord = to_canvas_coord(event.position)
+		%Coord.text = \"X:\" + str(canvas_coord.x) + \"\\nY:\" + str(canvas_coord.y)
+		%Coord.position = event.position + Vector2(16, -%Coord.size.y)
+		if click_start != Vector2.ZERO:
 			queue_redraw()
-		
-		# Display mouse coordinate
-		var dist = to_canvas_position(mouse_pos) / cell_size
-		dist = dist.round() as Vector2i
-		$Mouse_Pos.position = mouse_pos + Vector2(18, -$Mouse_Pos.size.y * 0.5)
-		$Mouse_Pos.text = \"x: \" + str(dist.x) + \"\\ny: \" + str(dist.y)
-
-func object_pressed() -> bool:
-	return Input.is_key_pressed(KEY_CTRL)
-
-func _draw():
-	super()
 	
-	# Make the minimap.
-	var map_rect = Vector2(300, 150)
-	map_rect = Rect2(size - map_rect - Vector2(64, 32), map_rect)
-	draw_style_box(minimap, map_rect)
-	
-	var local_orig = to_local_position(Vector2.ZERO)
-	
-	# Draw origin lines on the minimap
-	if local_orig.y > 0 and local_orig.y < size.y:
-		var start_h_orig : Vector2
-		var stop_h_orig : Vector2
-		start_h_orig.x = map_rect.position.x
-		start_h_orig.y = remap(local_orig.y, 0, size.y, map_rect.position.y, map_rect.end.y)
-		stop_h_orig.x = map_rect.end.x
-		stop_h_orig.y = remap(local_orig.y, 0, size.y, map_rect.position.y, map_rect.end.y)
-		draw_line(start_h_orig, stop_h_orig, Color.WHITE)
-	
-	if local_orig.x > 0 and local_orig.y < size.x:
-		var start_v_orig : Vector2
-		var stop_v_orig : Vector2
-		start_v_orig.x = remap(local_orig.x, 0, size.x, map_rect.position.x, map_rect.end.x)
-		start_v_orig.y = map_rect.position.y
-		stop_v_orig.x = remap(local_orig.x, 0, size.x, map_rect.position.x, map_rect.end.x)
-		stop_v_orig.y = map_rect.end.y
-		draw_line(start_v_orig, stop_v_orig, Color.WHITE)
-	
-	# Draw center of circles on the minimap
-	for each in visible_circles:
-		var pos = to_local_position(each.center)
-		if pos.x > 0 and pos.x < size.x and pos.y > 0 and pos.y < size.y:  # Clip points to the minimap
-			pos.x = remap(pos.x, 0, size.x, map_rect.position.x, map_rect.end.x)
-			pos.y = remap(pos.y, 0, size.y, map_rect.position.y, map_rect.end.y)
-			draw_circle(pos, 1, Color.WHITE)
-
-func draw_geometry(canvas_rect:Rect2):
-	if creating_circle:
-		draw_line(ini_mouse, mouse_pos, Color.PURPLE, 3)
-	
-	# Display existing circles withing view area.
-	visible_circles = find_objects_lazy(canvas_rect)
-	for each in visible_circles:
-		var circle_center = to_local_position(each.center)
-		draw_circle(circle_center, each.radius / zoom, Color.PURPLE, false, 3)
+	if event is InputEventMouseButton:
+		if event.is_released():
+			if event.button_index == MOUSE_BUTTON_LEFT:
+				if lasso_screen_rect.size < MINIMUM_LASSO:
+					match %Options.selected:
+						0:  # Marching Squares
+							var tile = to_canvas_coord(event.position + Vector2(0.5, 0.5) * snap_val).snappedf(snap_val) - Vector2(0.5, 0.5) * snap_val
+							var points = [
+								Vector2i( tile + Vector2(0.5, 0.5) * snap_val ),
+								Vector2i(tile + Vector2(-0.5, 0.5) * snap_val),
+								Vector2i(tile + Vector2(-0.5, -0.5) * snap_val),
+								Vector2i(tile + Vector2(0.5, -0.5) * snap_val),
+								]
+							var exists = 0
+							var i : int = -1
+							for p in points:  # Find corners of clicked tile.
+								i+=1
+								exists |= int(p in obj_intel) << i
+							if exists == 0b1111:
+								# Remove points, like removing a tile.
+								for p in points:
+									remove_object(p)
+							else:
+								# Add points, like adding a tile.
+								for p in points:
+									if not p in obj_intel:
+										add_object(p, p, \"marchsqr\")
+							queue_redraw()
+							%Minimap.queue_redraw()
+						1:  # Circles
+							if click_start == Vector2.ZERO:
+								click_start = event.position
+								queue_redraw()
+							else:
+								var radius = (event.position - click_start).length()
+								add_object([radius * zoom, Time.get_ticks_msec()], to_canvas_coord(click_start))
+								click_start = Vector2.ZERO
+								queue_redraw()
+						2:  # Control element
+							var ui = Button.new()
+							ui.text = \"Push Me!\"
+							ui.pressed.connect(_ui_pressed.bind(ui))
+							add_object(ui, to_canvas_coord(event.position))
+							ui.position = to_canvas_coord(event.position)
+							%Minimap.queue_redraw()
+						_:
+							pass
 
 
-func _get_obj_rect(obj, _parti_name:StringName=\"_\", data:={}) -> Rect2:
-	# Figure out a box that fits a given circle.
-	var rect = Rect2()
-	var half_size = Vector2.ONE * obj.radius
-	rect.position = data.coord - half_size
-	rect.end = data.coord + half_size
-	return rect
+func draw_fore_geometry(viewed_canvas_rect:Rect2):
+	#region Render Marching Squares
+	var outline : PackedVector2Array
+	var tiles : Dictionary[Vector2i, int]
+	for p in find_objects(viewed_canvas_rect, \"marchsqr\"):
+		var i : int = -1
+		for offset in [Vector2i(-1, 0), Vector2i(-1,-1), Vector2i(0, -1), Vector2i.ZERO,]:
+			i += 1
+			var t = p + offset * snap_val
+			var tile_code = tiles.get_or_add(t, 0) | (1 << i)
+			tiles[t] = tile_code
+	for t in tiles:
+		var vertices : PackedVector2Array
+		for v in tile_map[tiles[t]]:
+			vertices.append(to_screen_coord(Vector2i(v * snap_val) + t))
+		outline.append_array(vertices)
+			
+	if outline.size() > 2:
+		draw_multiline(outline, Color.BLACK, 3 * zoom)
+	#endregion
+	
+	#region Circles and Control element
+	if click_start != Vector2.ZERO:
+		var radius = (get_local_mouse_position() - click_start).length() * zoom
+		draw_circle(click_start, radius, Color.PURPLE, false, 3)
+	for c in find_objects(viewed_canvas_rect):
+		var data = get_obj_data(c)
+		if typeof(c) == TYPE_ARRAY:
+			draw_circle(to_screen_coord(data.position), c[0] * zoom, Color.PURPLE, false, 3)
+	#endregion
+
+func _ui_pressed(ui:Button):
+	ui.text = \"MY SATISFACTION\"
+	var tween = create_tween()
+	tween.set_parallel(false)
+	tween.tween_property(ui, \"modulate\", Color(3.705, 0.0, 0.0), 1.0).set_trans(Tween.TRANS_SINE)
+	tween.tween_property(ui, \"modulate\", Color.WHITE, 0.5).set_trans(Tween.TRANS_SINE)
+	await tween.finished
+	ui.text = \"Push Me!\"
+
+#region Marching Squares Functions
+var marchsqr_parti : Dictionary[Vector2i, Array]
+
+func offset_tile(vertices:PackedVector2Array, coord:Vector2) -> PackedVector2Array:
+	var new_tile : PackedVector2Array
+	for p in vertices:
+		new_tile.append(to_screen_coord(p * snap_val + coord))
+	return new_tile
+
+var tile_map : Array[PackedVector2Array] = [  # For use with draw_multiline()
+	[],  # 0000
+	
+	[Vector2(0.4, 0), Vector2(0.4, 0.2), Vector2(0.4, 0.2), Vector2(0.8, 0.6), Vector2(0.8, 0.6), Vector2(1, 0.6)],  # 0001
+	[Vector2(0.4, 1), Vector2(0.4, 0.8), Vector2(0.4, 0.8), Vector2(0.8, 0.4), Vector2(0.8, 0.4), Vector2(1, 0.4)],  # 0010
+	[Vector2(0.4, 0), Vector2(0.4, 1)],  # 0011
+	[Vector2(0, 0.4), Vector2(0.2, 0.4), Vector2(0.2, 0.4), Vector2(0.6, 0.8), Vector2(0.6, 0.8), Vector2(0.6, 1)],  # 0100
+	
+	[Vector2(0, 0.4), Vector2(0.4, 0), Vector2(0.6, 1), Vector2(1, 0.6)],  # 0101
+	[Vector2(0, 0.4), Vector2(1, 0.4)],  # 0110
+	[Vector2(0, 0.4), Vector2(0.2, 0.4), Vector2(0.2, 0.4), Vector2(0.4, 0.2), Vector2(0.4, 0.2), Vector2(0.4, 0)], #0111
+	[Vector2(0, 0.6), Vector2(0.2, 0.6), Vector2(0.2, 0.6), Vector2(0.6, 0.2), Vector2(0.6, 0.2), Vector2(0.6, 0)],  # 1000
+	
+	[Vector2(0, 0.6), Vector2(1, 0.6)],  # 1001
+	[Vector2(0.6, 0), Vector2(1, 0.4), Vector2(0, 0.6), Vector2(0.4, 1)],  # 1010
+	[Vector2(0, 0.6), Vector2(0.2, 0.6), Vector2(0.2, 0.6), Vector2(0.4, 0.8), Vector2(0.4, 0.8), Vector2(0.4, 1)],  # 1011
+	[Vector2(0.6, 0), Vector2(0.6, 1)],  # 1100
+	
+	[Vector2(0.6, 1), Vector2(0.6, 0.8), Vector2(0.6, 0.8), Vector2(0.8, 0.6), Vector2(0.8, 0.6), Vector2(1, 0.6)],  # 1101
+	[Vector2(0.6, 0), Vector2(0.6, 0.2), Vector2(0.6, 0.2), Vector2(0.8, 0.4), Vector2(0.8, 0.4), Vector2(1, 0.4)],  # 1110
+	[],  # 1111
+]
+#endregion
 "
 
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_7dm0k"]
-bg_color = Color(0.20667663, 0.22805166, 0.3235695, 1)
-border_width_left = 6
-border_width_top = 8
-border_color = Color(0.44849998, 0.45521668, 0.65, 1)
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_7u557"]
+content_margin_left = 0.0
+content_margin_top = 0.0
+content_margin_right = 0.0
+content_margin_bottom = 0.0
+bg_color = Color(0.1, 0.1, 0.1, 0.6)
+skew = Vector2(0.05, 0)
+border_width_left = 16
+border_width_top = 16
+border_color = Color(0.4198134, 0.41981304, 0.41981322, 1)
 border_blend = true
 corner_radius_top_left = 16
 corner_radius_top_right = 16
 corner_radius_bottom_right = 16
 corner_radius_bottom_left = 16
-expand_margin_left = 8.0
-expand_margin_top = 8.0
-expand_margin_right = 8.0
-expand_margin_bottom = 8.0
-shadow_color = Color(0, 0, 0, 0.5764706)
+corner_detail = 5
 shadow_size = 8
-shadow_offset = Vector2(5, 5)
+shadow_offset = Vector2(6, 6)
 
-[node name="Minimap_Example" type="ColorRect"]
+[sub_resource type="GDScript" id="GDScript_3uaqy"]
+script/source = "extends Panel
+
+@export var chart : InfiCanvas
+
+func _draw() -> void:
+	var start = chart.origin * chart.zoom
+	var stop = chart.origin * chart.zoom
+	start.x = 0
+	stop.x = size.x
+	start.y = remap(start.y, 0, chart.size.y, 0, size.y)
+	stop.y = start.y
+	draw_line(start, stop, Color.WHEAT)
+	start.x = remap(chart.origin.x, 0, chart.size.x, 0, size.x)
+	stop.x = start.x
+	start.y = 0
+	stop.y = size.y
+	draw_line(start, stop, Color.WHEAT)
+	
+	for each in chart.obj_intel:
+		var each_pos = chart.to_screen_coord(chart.obj_intel[each].position)
+		each_pos.x = remap(each_pos.x, 0, chart.size.x, 0, size.x)
+		each_pos.y = remap(each_pos.y, 0, chart.size.y, 0, size.y)
+		draw_circle(each_pos, 3, Color.WHITE)
+"
+
+[node name="MinimapExample" type="ColorRect" unique_id=1856550332]
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-color = Color(0.26121968, 0.27156264, 0.51836896, 1)
-script = SubResource("GDScript_7dm0k")
-minimap = SubResource("StyleBoxFlat_7dm0k")
-partition_size = 500.0
-cell_size = 100
+color = Color(0.21583402, 0.3296402, 0.57740444, 1)
+script = SubResource("GDScript_7u557")
+snap_val = 26
+cell_size = 26
 grid_thick = 4
-orig_thick = 6
+orig_thick = 2
 lasso_thick = 4
-grid_color = Color(0.39373454, 0.4607876, 0.71899766, 1)
-orig_color = Color(0.7258201, 0.63094354, 0.24073404, 1)
-lasso_main_color = Color(0.22679998, 0.42, 0.35238, 1)
-lasso_alter_color = Color(0.58597565, 0.27986872, 0.26514697, 1)
-chirality = 2
-metadata/_custom_type_script = "uid://d1k1r74hifv3y"
+grid_color = Color(0.29954174, 0.38610616, 0.64123654, 1)
+orig_color = Color(0.71, 0.6117833, 0.12070001, 1)
+metadata/_custom_type_script = "uid://cu13iyftrtdhu"
 
-[node name="Mouse_Pos" type="Label" parent="."]
+[node name="MarginContainer" type="MarginContainer" parent="." unique_id=581883829]
 layout_mode = 1
-anchors_preset = 4
-anchor_top = 0.5
-anchor_bottom = 0.5
-offset_top = -11.5
-offset_right = 40.0
-offset_bottom = 11.5
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
 grow_vertical = 2
-text = "N/A"
+mouse_filter = 2
+theme_override_constants/margin_left = 22
+theme_override_constants/margin_top = 22
+theme_override_constants/margin_right = 22
+theme_override_constants/margin_bottom = 22
 
-[node name="Instructions" type="Label" parent="."]
+[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer" unique_id=537804084]
+layout_mode = 2
+size_flags_horizontal = 8
+size_flags_vertical = 8
+
+[node name="HBoxContainer" type="HBoxContainer" parent="MarginContainer/VBoxContainer" unique_id=1214855891]
+layout_mode = 2
+alignment = 1
+
+[node name="Label" type="Label" parent="MarginContainer/VBoxContainer/HBoxContainer" unique_id=774590291]
+layout_mode = 2
+text = "Add  Object: "
+
+[node name="Options" type="OptionButton" parent="MarginContainer/VBoxContainer/HBoxContainer" unique_id=1830710766]
+unique_name_in_owner = true
+layout_mode = 2
+selected = 0
+item_count = 3
+popup/item_0/text = "Marching Squares"
+popup/item_0/id = 0
+popup/item_1/text = "Circles"
+popup/item_1/id = 1
+popup/item_2/text = "Button"
+popup/item_2/id = 2
+
+[node name="Minimap" type="Panel" parent="MarginContainer/VBoxContainer" unique_id=1556753256 node_paths=PackedStringArray("chart")]
+unique_name_in_owner = true
+clip_contents = true
+custom_minimum_size = Vector2(100, 100)
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_7u557")
+script = SubResource("GDScript_3uaqy")
+chart = NodePath("../../..")
+
+[node name="Instructions" type="Label" parent="." unique_id=1638265665]
 layout_mode = 1
 anchors_preset = 10
 anchor_right = 1.0
-offset_bottom = 23.0
+offset_bottom = 49.0
 grow_horizontal = 2
-text = "Press CTRL while dragging to draw a circle.
-Coordinate at mouse position is shown on the cursor."
+text = "
+The coordinates shown next to the cursor are the canvas coordinates at the cursor.
+Select from one kind of object to add and click to place the object in the canvas."
 horizontal_alignment = 1
 vertical_alignment = 2
+
+[node name="Coord" type="Label" parent="." unique_id=271710433]
+unique_name_in_owner = true
+layout_mode = 0
+offset_right = 40.0
+offset_bottom = 23.0
+text = "X:00
+Y:00"
