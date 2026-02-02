@@ -9,6 +9,8 @@ class_name InfiCanvas
 ## Other UI details like the background pattern and the compass arrow can also be changed by overriding their functions.[br]
 ## Remember to use coordinates translated into canvas coordinates with [code]to_canvas_coord()[/code], or things will looks fixed on the screen.
 
+# MODIFICATIONS
+
 #TODO Make zoom into the center
 #FIXME go_to(Vector2.ZERO) doesn't seem to work if InfiCanvas isn't root node.
 
@@ -108,6 +110,8 @@ func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		if event.is_pressed():
 			match event.button_index:
+				MOUSE_BUTTON_LEFT:
+					pass
 				MOUSE_BUTTON_MIDDLE:
 					_ini_origin = origin
 				MOUSE_BUTTON_WHEEL_UP:
@@ -134,14 +138,14 @@ func _input(event: InputEvent) -> void:
 		if event.is_pressed():
 			match event.button_index:
 				MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_MIDDLE:
-					ini_mouse = event.position
+					ini_mouse = get_local_mouse_position()
 					# Reset Rects
 					lasso_screen_rect = Rect2()
 					lasso_canvas_rect = Rect2()
 		elif event.is_released():
 			match event.button_index:
 				MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_MIDDLE:
-					fin_mouse = event.position
+					fin_mouse = get_local_mouse_position()
 					lasso_canvas_rect = to_canvas_rect(lasso_screen_rect)
 					queue_redraw()
 	
@@ -149,7 +153,7 @@ func _input(event: InputEvent) -> void:
 		if lasso_allowed and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 			queue_redraw()
 			
-		var displacement = event.position - ini_mouse
+		var displacement = get_local_mouse_position() - ini_mouse
 		if Input.is_mouse_button_pressed(MOUSE_BUTTON_MIDDLE):
 			lasso_screen_rect = Rect2(ini_mouse, displacement).abs()
 			if pan_allowed:
@@ -172,8 +176,6 @@ func _input(event: InputEvent) -> void:
 				data.position = _selected_positions[i] + displacement / zoom
 				if "position" in obj:
 					obj.position = data.position
-					if data.centered:
-						obj.position -= get_obj_rect(obj).size / 2
 
 func selected_obj_movement_start():
 	if move_obj_allowed:
@@ -182,7 +184,7 @@ func selected_obj_movement_start():
 		_selected_positions.clear()
 		for each in _selected:
 			var data : Dictionary = get_obj_data(each)
-			_selected_positions.append(data.position)
+			_selected_positions.append(data.alt_position)
 
 ## You need to call this when the movement operations has finished.
 func selected_obj_movement_stop():
@@ -250,14 +252,16 @@ func _draw():
 	var view_x = local_origin.x > 0 and local_origin.x < size.x
 	var view_y = local_origin.y > 0 and local_origin.y < size.y
 	
+	var view_rect = to_canvas_rect(Rect2(Vector2.ZERO, size))
+	
 	draw_background_pattern(local_origin, to_screen_coord(Vector2.ONE * cell_size, -origin).x)
 	draw_origin_axis(view_x, view_y, local_origin)
 	if not (view_x and view_y):
 		draw_compass()
 	
-	draw_back_geometry(to_canvas_rect(get_rect()))
+	draw_back_geometry(view_rect)
 	highlight_selection(_selected)
-	draw_fore_geometry(to_canvas_rect(get_rect()))
+	draw_fore_geometry(view_rect)
 	
 	if lasso_allowed and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		draw_lasso()
@@ -271,10 +275,9 @@ func _draw():
 		## `find_objects_tolerant()` will return the objects which bounding rect still touches the blue, but not if completely outside.
 		## `find_objects_zealous()` will return the objects which bounding rect is completely inside the blue.
 		
-		var canvas_rect = to_canvas_rect(get_rect())
 		
-		var start = make_partition_id(canvas_rect.position) - Vector2i.ONE * 1
-		var stop = make_partition_id(canvas_rect.end) + Vector2i.ONE * 1
+		var start = make_partition_id(view_rect.position) - Vector2i.ONE * 1
+		var stop = make_partition_id(view_rect.end) + Vector2i.ONE * 1
 		var parti_size = Vector2.ONE * partition_size
 		for x in range(start.x, stop.x):
 			for y in range(start.y, stop.y):
@@ -287,7 +290,7 @@ func _draw():
 					c = Color.DARK_RED
 				rect = to_screen_rect(rect).grow(-6)
 				draw_rect(rect, c, false, 6)
-		draw_rect(to_screen_rect(canvas_rect).grow(-20), Color.BLUE, false, 2)
+		draw_rect(to_screen_rect(view_rect).grow(-20), Color.BLUE, false, 2)
 
 ## The grid pattern, or whatever else, if overriden.
 func draw_background_pattern(offset:Vector2, spacing:float):
@@ -448,9 +451,10 @@ func update_object(obj, new_partition="") -> Dictionary:
 		# Update position as constrained by options.
 		var pos : Vector2 = data.position
 		if data.get("snap", false):
+			pos = pos - Vector2(0.5, 0.5) * snap_val
 			pos = pos.snappedf(snap_val)
 		if data.get("centered", false):
-			pos -= get_obj_rect(obj).size / 2
+			pos += get_obj_rect(obj).size / 2
 		data["alt_position"] = pos
 	
 		# Find if we changed partition, whether by ID or the partition name.
