@@ -6,7 +6,28 @@ extends InfiCanvas
 
 const MINIMAP_SIZE = 350
 
+class MarchSquarePoint:
+	var position : Vector2
+	var coord : Vector2i : 
+		set(val):
+			position = Vector2(val)
+			coord = val
+
+func point_in_mrchsqr(point:Vector2i) -> bool:
+	for each in parti.mrchsqr.obj_intel:
+		if each.coord == point: return true
+	return false
+
+func rem_mrchsqr_tile(points:Array):
+	for each in parti.mrchsqr.obj_intel.duplicate():
+		if each.coord in points:
+			parti.mrchsqr.remove_object(each)
+
+
 func _ready() -> void:
+	parti[\"mrchsqr\" as Variant] = SpatialPartition.new()
+	parti[\"circles\" as Variant] = SpatialPartition.new()
+	parti[\"buttons\" as Variant] = SpatialPartition.new()
 	resized.connect(_resized)
 	_resized()
 
@@ -37,27 +58,28 @@ func _gui_input(event: InputEvent) -> void:
 				if lasso_screen_rect.size < MINIMUM_LASSO:
 					match %Options.selected:
 						0:  # Marching Squares
-							var tile = to_canvas_coord(event.position + Vector2(0.5, 0.5) * snap_val).snappedf(snap_val) - Vector2(0.5, 0.5) * snap_val
+							var tile = to_canvas_coord(event.position + Vector2(0.5, 0.5) * cell_size).snappedf(cell_size) - Vector2(0.5, 0.5) * cell_size
 							var points = [
-								Vector2i( tile + Vector2(0.5, 0.5) * snap_val ),
-								Vector2i(tile + Vector2(-0.5, 0.5) * snap_val),
-								Vector2i(tile + Vector2(-0.5, -0.5) * snap_val),
-								Vector2i(tile + Vector2(0.5, -0.5) * snap_val),
+								Vector2i( tile + Vector2(0.5, 0.5) * cell_size ),
+								Vector2i(tile + Vector2(-0.5, 0.5) * cell_size),
+								Vector2i(tile + Vector2(-0.5, -0.5) * cell_size),
+								Vector2i(tile + Vector2(0.5, -0.5) * cell_size),
 								]
 							var exists = 0
 							var i : int = -1
 							for p in points:  # Find corners of clicked tile.
 								i+=1
-								exists |= int(p in obj_intel) << i
+								exists |= int(point_in_mrchsqr(p)) << i
 							if exists == 0b1111:
 								# Remove points, like removing a tile.
-								for p in points:
-									remove_object(p)
+								rem_mrchsqr_tile(points)
 							else:
 								# Add points, like adding a tile.
 								for p in points:
-									if not p in obj_intel:
-										add_object(p, p, \"marchsqr\")
+									if not point_in_mrchsqr(p):
+										var mrchsqr_point = MarchSquarePoint.new()
+										mrchsqr_point.coord = p
+										place_object(mrchsqr_point, p, parti.mrchsqr)
 							queue_redraw()
 							%Minimap.queue_redraw()
 						1:  # Circles
@@ -66,50 +88,51 @@ func _gui_input(event: InputEvent) -> void:
 								queue_redraw()
 							else:
 								var radius = (event.position - click_start).length()
-								add_object([radius * zoom, Time.get_ticks_msec()], to_canvas_coord(click_start))
+								var circle = {\"position\": to_canvas_coord(click_start), \"radius\": radius * zoom, \"timestamp\": Time.get_ticks_msec()}
+								place_object(circle, circle.position, parti.circles)
 								click_start = Vector2.ZERO
 								queue_redraw()
+								%Minimap.queue_redraw()
 						2:  # Control element
 							var ui = Button.new()
 							ui.text = \"Push Me!\"
 							ui.pressed.connect(_ui_pressed.bind(ui))
-							add_object(ui, to_canvas_coord(event.position))
-							ui.position = to_canvas_coord(event.position)
+							place_object(ui, to_canvas_coord(event.position), parti.buttons)
 							%Minimap.queue_redraw()
 						_:
 							pass
 
 
-func draw_fore_geometry(viewed_canvas_rect:Rect2):
+func draw_back_geometry(viewed_canvas_rect:Rect2):
 	#region Render Marching Squares
 	var outline : PackedVector2Array
 	var tiles : Dictionary[Vector2i, int]
-	for p in find_objects(viewed_canvas_rect, \"marchsqr\"):
+	for p in parti.mrchsqr.find_objects(viewed_canvas_rect):
 		var i : int = -1
 		for offset in [Vector2i(-1, 0), Vector2i(-1,-1), Vector2i(0, -1), Vector2i.ZERO,]:
 			i += 1
-			var t = p + offset * snap_val
+			var t = p.coord + offset * cell_size
 			var tile_code = tiles.get_or_add(t, 0) | (1 << i)
 			tiles[t] = tile_code
 	for t in tiles:
 		var vertices : PackedVector2Array
 		for v in tile_map[tiles[t]]:
-			vertices.append(to_screen_coord(Vector2i(v * snap_val) + t))
+			vertices.append(to_screen_coord(Vector2i(v * cell_size) + t))
 		outline.append_array(vertices)
-			
+	
 	if outline.size() > 2:
 		draw_multiline(outline, Color.BLACK, 3 * zoom)
 	#endregion
 	
-	#region Circles and Control element
-	if click_start != Vector2.ZERO:
+	#region Circles
+	if click_start != Vector2.ZERO:  # Start new circle.
 		var radius = (get_local_mouse_position() - click_start).length() * zoom
 		draw_circle(click_start, radius, Color.PURPLE, false, 3)
-	for c in find_objects(viewed_canvas_rect):
-		var data = get_obj_data(c)
-		if typeof(c) == TYPE_ARRAY:
-			draw_circle(to_screen_coord(data.position), c[0] * zoom, Color.PURPLE, false, 3)
+	for c in parti.circles.find_objects(viewed_canvas_rect):  # Draw existing circles.
+		draw_circle(to_screen_coord(c.position), c.radius * zoom, Color.PURPLE, false, 3)
 	#endregion
+	
+	#NOTE: Godot nodes added to a partition don't need specific draw functions as they draw by themselves.
 
 func _ui_pressed(ui:Button):
 	ui.text = \"MY SATISFACTION\"
@@ -126,7 +149,7 @@ var marchsqr_parti : Dictionary[Vector2i, Array]
 func offset_tile(vertices:PackedVector2Array, coord:Vector2) -> PackedVector2Array:
 	var new_tile : PackedVector2Array
 	for p in vertices:
-		new_tile.append(to_screen_coord(p * snap_val + coord))
+		new_tile.append(to_screen_coord(p * cell_size + coord))
 	return new_tile
 
 var tile_map : Array[PackedVector2Array] = [  # For use with draw_multiline()
@@ -192,8 +215,8 @@ func _draw() -> void:
 	stop.y = size.y
 	draw_line(start, stop, Color.WHEAT)
 	
-	for each in chart.obj_intel:
-		var each_pos = chart.to_screen_coord(chart.obj_intel[each].position)
+	for each in chart.all_objs:
+		var each_pos = chart.to_screen_coord(each.position)
 		each_pos.x = remap(each_pos.x, 0, chart.size.x, 0, size.x)
 		each_pos.y = remap(each_pos.y, 0, chart.size.y, 0, size.y)
 		draw_circle(each_pos, 3, Color.WHITE)
@@ -207,7 +230,6 @@ grow_horizontal = 2
 grow_vertical = 2
 color = Color(0.21583402, 0.3296402, 0.57740444, 1)
 script = SubResource("GDScript_7u557")
-snap_val = 26
 cell_size = 26
 grid_thick = 4
 orig_thick = 2
